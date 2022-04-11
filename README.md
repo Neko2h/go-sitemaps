@@ -57,7 +57,7 @@ To parse sitemap Index
 Concurent parsing ALL links
 ```golang
 	sitemaps, _, _ := sitemaps.ParseIndex("https://somesite.com/index.xml", 5)
-	count, links := sitemaps.GetUrls(10, 5)
+	count, links := sitemaps.GetUrls(10)
 	for _, v := range links {
 		fmt.Println(v.Loc, v.ChangeFreq, v.ChangeFreq)
 	}
