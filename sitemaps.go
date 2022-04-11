@@ -149,21 +149,21 @@ func (s *UrlSet) Count() int {
 	return len(s.Entites)
 }
 
-func worker(id int, jobs <-chan string, timeout int) {
+func worker(id int, jobs <-chan string) {
 	for j := range jobs {
-		urlset, _ := ParseSitemap(j, timeout)
+		urlset, _ := ParseSitemap(j, Timeout)
 		ResultChan <- urlset.Entites
 	}
 }
 
-func (s *Sitemapindex) GetUrls(workers int, timeout int) (int, []Entity) {
+func (s *Sitemapindex) GetUrlsGreedy(workers int) (int, []Entity) {
 
 	var urls []Entity
 	JobsCount = len(s.Entites)
 	jobs := make(chan string, JobsCount)
 
 	for w := 1; w <= workers; w++ {
-		go worker(w, jobs, timeout)
+		go worker(w, jobs)
 	}
 
 	for j := 0; j < len(s.Entites); j++ {
@@ -180,13 +180,13 @@ func (s *Sitemapindex) GetUrls(workers int, timeout int) (int, []Entity) {
 	return len(urls), urls
 }
 
-func (s *Sitemapindex) GetUrlsLazy(workers int, timeout int) {
+func (s *Sitemapindex) GetUrlsLazy(workers int) {
 
 	JobsCount = len(s.Entites)
 	jobs := make(chan string, JobsCount)
 
 	for w := 1; w <= workers; w++ {
-		go worker(w, jobs, timeout)
+		go worker(w, jobs)
 	}
 	for j := 0; j < len(s.Entites); j++ {
 		jobs <- s.Entites[j].Loc
