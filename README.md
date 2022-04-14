@@ -11,6 +11,7 @@
 - Concurrency
 - Zero dependencies
 - GZIP support
+- Image, Video suport
 
 
 
