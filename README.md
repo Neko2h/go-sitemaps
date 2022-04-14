@@ -67,7 +67,7 @@ Since the library is using xml decoder it's fast and me memory efficient
 
 ## TODO
 
-- [+] Benchmarking
+- [ ] Benchmarking
 - [ ] Tests!
 
 ## License
