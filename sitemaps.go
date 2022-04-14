@@ -5,39 +5,39 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/xml"
-	"io/ioutil"
+	"log"
 	"net/http"
+	"sync"
 	"time"
 )
 
 var (
-	ResultChan = make(chan []Entity)
-	JobsCount  int
-	Timeout    int
+	ResultChan         chan Entity
+	JobsCount          int
+	Timeout            int
+	InsecureSkipVerify bool
+	Async              bool
+	wg                 sync.WaitGroup
 )
 
 type Sitemapindex struct {
-	Entites []Entity `xml:"sitemap"`
+	Entites Entity `xml:"sitemap"`
 	Status  int
+	Url     string
 }
-
-type UrlSet struct {
-	Entites []Entity `xml:"url"`
-	Status  int
-}
-
 type Entity struct {
 	Loc        string  `xml:"loc"`
-	Lastmod    string  `xml:"lastmod,omitempty"`
-	ChangeFreq string  `xml:"changefreq,omitempty"`
-	Images     []Image `xml:"image"`
-	Videos     []Video `xml:"video"`
+	Changefreq string  `xml:"changefreq,omitempty"`
+	Priority   float64 `xml:"priority,omitempty"`
+	Images     []Image `xml:"image,omitempty"`
+	Videos     []Video `xml:"video,omitempty"`
+	SitemapURL string
 }
 
 type Image struct {
 	Loc     string `xml:"loc"`
 	Title   string `xml:"title"`
-	Caption string `xml:"image:caption"`
+	Caption string `xml:"caption"`
 	Geo     string `xml:"geo_location"`
 	License string `xml:"license"`
 }
@@ -58,10 +58,63 @@ type Video struct {
 	Live                  string `xml:"live"`
 }
 
-func makeRequest(url string) ([]byte, error, int) {
+type EntityCallback func(e Entity)
 
+func decodeXml(resp *http.Response, callback EntityCallback, entityType string) int {
+
+	var decoder *xml.Decoder
+	if !resp.Uncompressed &&
+		resp.Header["Content-Type"][0] == "application/gzip" || resp.Header["Content-Type"][0] == "application/x-gzip" {
+		//If gzip compression is returned, it needs to be decompressed
+		reader, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			panic(err)
+		}
+		decoder = xml.NewDecoder(reader)
+		defer reader.Close()
+
+		if err != nil {
+			panic(err)
+		}
+
+	} else {
+		decoder = xml.NewDecoder(resp.Body)
+	}
+
+	var counter int
+	for {
+		t, _ := decoder.Token()
+		if t == nil {
+			break
+		}
+		switch se := t.(type) {
+		case xml.StartElement:
+
+			element := Entity{}
+
+			if entityType == "index" {
+				if se.Name.Local == "sitemap" {
+					decoder.DecodeElement(&element, &se)
+				}
+			} else if entityType == "sitemap" {
+				if se.Name.Local == "url" {
+					decoder.DecodeElement(&element, &se)
+				}
+			}
+			if element.Loc != "" {
+				element.SitemapURL = resp.Request.URL.String()
+				callback(element)
+				counter++
+			}
+		}
+	}
+
+	return counter
+}
+
+func makeRequest(url string, callback EntityCallback, entityType string) (int, error) {
 	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: InsecureSkipVerify},
 	}
 	client := &http.Client{Transport: tr}
 
@@ -72,125 +125,67 @@ func makeRequest(url string) ([]byte, error, int) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		panic(err)
+		log.Panic(url, err.Error())
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, err, resp.StatusCode
+		return 0, err
 	}
 
 	if err != nil {
-		return nil, err, resp.StatusCode
+		return 0, err
 	}
 	defer resp.Body.Close()
 
-	var body []byte
-
-	if !resp.Uncompressed && resp.Header["Content-Type"][0] == "application/gzip" {
-		//If gzip compression is returned, it needs to be decompressed
-		reader, err := gzip.NewReader(resp.Body)
-		if err != nil {
-			panic(err)
-		}
-		defer reader.Close()
-		body, err = ioutil.ReadAll(reader)
-		if err != nil {
-			panic(err)
-		}
-
-	} else {
-		body, err = ioutil.ReadAll(resp.Body)
-		if err != nil {
-			panic(err)
-		}
-	}
-
-	return body, nil, resp.StatusCode
+	total := decodeXml(resp, callback, entityType)
+	return total, nil
 }
 
-func ParseIndex(url string, timeout int) (Sitemapindex, int, error) {
-	Timeout = timeout
-	body, err, status := makeRequest(url)
-	if err != nil {
-		return Sitemapindex{}, 0, err
-	}
-
-	var res Sitemapindex
-	err = xml.Unmarshal(body, &res)
-	res.Status = status
-	if err != nil {
-		return Sitemapindex{}, 0, err
-	}
-	return res, len(res.Entites), nil
-
-}
-
-func ParseSitemap(url string, timeout int) (UrlSet, error) {
+func Parse(url string, timeout int, sslCheck bool, scrapeType string, callback EntityCallback) (int, error) {
+	InsecureSkipVerify = sslCheck
 	Timeout = timeout
 
-	var res UrlSet
-	body, err, status := makeRequest(url)
-	if err != nil {
-		return UrlSet{}, err
+	total, err := makeRequest(url, callback, scrapeType)
+
+	return total, err
+}
+
+func makeScrapeSlice(e []Entity) []string {
+	var slice []string
+	for _, v := range e {
+		slice = append(slice, v.Loc)
 	}
-	err = xml.Unmarshal(body, &res)
-	res.Status = status
-	if err != nil {
-		return UrlSet{}, err
-	}
-	return res, nil
+	return slice
 }
 
-func (s *Sitemapindex) Count() int {
-	return len(s.Entites)
-}
-
-func (s *UrlSet) Count() int {
-	return len(s.Entites)
-}
-
-func worker(id int, jobs <-chan string) {
-	for j := range jobs {
-		urlset, _ := ParseSitemap(j, Timeout)
-		ResultChan <- urlset.Entites
+func worker(id int, jobs <-chan string, timeout int, callback EntityCallback) {
+	for url := range jobs {
+		_, err := Parse(url, timeout, InsecureSkipVerify, "sitemap", callback)
+		if err != nil {
+			log.Println(err)
+		}
 	}
 }
 
-func (s *Sitemapindex) GetUrlsGreedy(workers int) (int, []Entity) {
-
-	var urls []Entity
-	JobsCount = len(s.Entites)
+func GetUrls(e []Entity, workers int, timeout int, callback EntityCallback) {
+	urls := makeScrapeSlice(e)
+	JobsCount := len(urls)
 	jobs := make(chan string, JobsCount)
 
 	for w := 1; w <= workers; w++ {
-		go worker(w, jobs)
+		wg.Add(1)
+		go func(id int, jobs <-chan string, timeout int, callback EntityCallback) {
+			worker(id, jobs, timeout, callback)
+
+			defer wg.Done()
+		}(w, jobs, timeout, callback)
+
 	}
 
-	for j := 0; j < len(s.Entites); j++ {
-		jobs <- s.Entites[j].Loc
-	}
-
-	close(jobs)
-
-	for a := 1; a <= JobsCount; a++ {
-		urls = append(urls, <-ResultChan...)
-	}
-
-	close(ResultChan)
-	return len(urls), urls
-}
-
-func (s *Sitemapindex) GetUrlsLazy(workers int) {
-
-	JobsCount = len(s.Entites)
-	jobs := make(chan string, JobsCount)
-
-	for w := 1; w <= workers; w++ {
-		go worker(w, jobs)
-	}
-	for j := 0; j < len(s.Entites); j++ {
-		jobs <- s.Entites[j].Loc
+	for j := 0; j < len(urls); j++ {
+		jobs <- urls[j]
 	}
 
 	close(jobs)
+	wg.Wait()
 }

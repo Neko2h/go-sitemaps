@@ -27,43 +27,37 @@ go get github.com/Neko2h/sitemaps
 
 
 ## Usage
-To simply parse sitemap
+To simply parse sitemap Index
 ```golang
-	a, err := sitemaps.ParseSitemap("https://site.com/sitemap.xml", 3)
-	if err != nil {
-		//error handling
-	}
-
-	for _, v := range a.Entites {
-		//DO something
-		fmt.Println(v.Loc, v.ChangeFreq, v.Lastmod)
-	}
+	total, err := sitemaps.Parse("https://somesite.com/sitemap.xml", 100, true, "index", func(e sitemaps.Entity) {
+		//handle results
+	})
 ```
-To parse sitemap Index
+To parse sitemap
 ```golang
 
-	a, filesCount, err := sitemaps.ParseIndex("https://somesite.com/sitemap.xml", 4)
-
-	if err != nil {
-		//error handling
-	}
-
-	for _, v := range a.Entites {
-		fmt.Println(v.Loc, v.Lastmod, v.ChangeFreq)
-	}
+	total, err := sitemaps.Parse("https://somesite.com/sitemap.xml", 100, true, "sitemap", func(e sitemaps.Entity) {
+		//handle results
+	})
 
 ```
 
-Concurent parsing ALL links
+Concurent parsing ALL links from all sitemaps
 ```golang
-	sitemaps, _, _ := sitemaps.ParseIndex("https://somesite.com/index.xml", 5)
-	count, links := sitemaps.GetUrls(10)
-	for _, v := range links {
-		fmt.Println(v.Loc, v.ChangeFreq, v.ChangeFreq)
+	var results []sitemaps.Entity
+	total, err := sitemaps.Parse("https://www.ebay.com/lst/VIS-0-index.xml", 100, true, "index", func(e sitemaps.Entity) {
+		results = append(results, e)
+	})
+	if err != nil {
+		//err handling
 	}
+
+	sitemaps.GetUrls(results, 6, 100, func(e sitemaps.Entity) {
+		//handle results
+	})
 ```
 This library is using worker pool algorithm.
-But beweare of parsing a huge amount of data. It will eat your RAM pretty fast.
+Since the library is using xml decoder it's fast and me memory efficient
 
 
 
@@ -73,10 +67,8 @@ But beweare of parsing a huge amount of data. It will eat your RAM pretty fast.
 
 ## TODO
 
-- [ ] Benchmarking
+- [+] Benchmarking
 - [ ] Tests!
-- [ ] Lazy concurent parsing
-- [ ] Link url with sitemapIndex pointer
 
 ## License
 
